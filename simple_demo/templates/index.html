@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>simple_demo 升级留言板｜JWT登录鉴权</title>
+    <style>
+        .container{width:750px;margin:40px auto;}
+        .auth-box{border:1px solid #ddd;padding:16px;margin-bottom:20px;}
+        .hidden{display:none;}
+        input,textarea{width:100%;box-sizing:border-box;padding:8px;margin:5px 0}
+        button{padding:6px 12px;margin:3px;cursor:pointer}
+        .msg-item{border:1px solid #eee;padding:12px;margin:8px 0;border-radius:6px}
+        .edit-popup{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;padding:20px;border:1px solid #666;z-index:999}
+    </style>
+</head>
+<body>
+<div class="container">
+    <h2>留言板系统（复用simple_demo架构）</h2>
+
+    <!-- 登录注册区域 -->
+    <div class="auth-box" id="authArea">
+        <h3>登录 / 注册</h3>
+        <input type="text" id="loginName" placeholder="用户名">
+        <input type="password" id="loginPwd" placeholder="密码">
+        <button onclick="register()">注册</button>
+        <button onclick="login()">登录</button>
+    </div>
+
+    <!-- 登录后区域 -->
+    <div id="userArea" class="hidden">
+        <span id="userInfo"></span>
+        <button onclick="logout()">退出登录</button>
+        <hr>
+        <textarea id="newContent" placeholder="发布留言"></textarea>
+        <br>
+        <button onclick="publishMsg()">提交留言</button>
+        <hr>
+        <input id="searchKey" placeholder="搜索留言内容">
+        <button onclick="searchMsg()">搜索</button>
+        <button onclick="loadMsg()">刷新全部</button>
+    </div>
+
+    <h3>留言列表</h3>
+    <div id="msgList"></div>
+    <div id="pageBox"></div>
+
+    <!-- 修改弹窗 -->
+    <div class="edit-popup hidden" id="editPopup">
+        <h4>编辑留言</h4>
+        <textarea id="editContent"></textarea>
+        <input hidden id="editMsgId">
+        <br>
+        <button onclick="submitEdit()">确认修改</button>
+        <button onclick="closeEditPopup()">取消</button>
+    </div>
+</div>
+
+<script>
+let token = localStorage.getItem("token") || "";
+let currentPage = 1;
+let searchKeyword = "";
+
+window.onload = function(){
+    refreshLoginView();
+    loadMsg();
+}
+
+function refreshLoginView(){
+    if(token){
+        document.getElementById("authArea").classList.add("hidden");
+        document.getElementById("userArea").classList.remove("hidden");
+        let userInfo = JSON.parse(localStorage.getItem("userInfo"));
+        document.getElementById("userInfo").innerText = `欢迎：${userInfo.username} ${userInfo.is_admin?"【管理员】":""}`;
+    }else{
+        document.getElementById("authArea").classList.remove("hidden");
+        document.getElementById("userArea").classList.add("hidden");
+    }
+}
+
+// 注册
+async function register(){
+    const username = document.getElementById("loginName").value.trim();
+    const password = document.getElementById("loginPwd").value.trim();
+    const res = await fetch("/api/auth/register",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({username,password})
+    })
+    const ret = await res.json();
+    alert(ret.msg);
+}
+
+// 登录
+async function login(){
+    const username = document.getElementById("loginName").value.trim();
+    const password = document.getElementById("loginPwd").value.trim();
+    const res = await fetch("/api/auth/login",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({username,password})
+    })
+    const ret = await res.json();
+    alert(ret.msg);
+    if(ret.code===200){
+        token = ret.data.token;
+        localStorage.setItem("token",token);
+        localStorage.setItem("userInfo",JSON.stringify(ret.data));
+        refreshLoginView();
+        loadMsg();
+    }
+}
+
+// 退出登录
+function logout(){
+    token = "";
+    localStorage.clear();
+    refreshLoginView();
+    loadMsg();
+}
+
+// 加载留言
+async function loadMsg(){
+    const res = await fetch(`/api/message/list?page=${currentPage}&keyword=${searchKeyword}`);
+    const ret = await res.json();
+    const listDom = document.getElementById("msgList");
+    const pageDom = document.getElementById("pageBox");
+    listDom.innerHTML = "";
+
+    ret.data.list.forEach(item=>{
+        let optHtml = "";
+        const loginUser = JSON.parse(localStorage.getItem("userInfo")||'{}');
+        if(token && (loginUser.is_admin || loginUser.user_id === item.user_id)){
+            optHtml = `
+                <button onclick="openEdit(${item.id},'${item.content}')">编辑</button>
+                <button onclick="delMsg(${item.id})">删除</button>
+            `
+        }
+        const html = `
+            <div class="msg-item">
+                <div>用户：${item.username} | ${item.create_time}</div>
+                <p>${item.content}</p>
+                <div>${optHtml}</div>
+            </div>
+        `;
+        listDom.innerHTML += html;
+    })
+
+    let pageHtml = "";
+    if(currentPage>1) pageHtml += `<button onclick="changePage(${currentPage-1})">上一页</button>`
+    pageHtml += `<span>第${currentPage}页 / ${ret.data.pages}页</span>`
+    if(currentPage < ret.data.pages) pageHtml += `<button onclick="changePage(${currentPage+1})">下一页</button>`
+    pageDom.innerHTML = pageHtml;
+}
+
+function changePage(p){
+    currentPage = p;
+    loadMsg();
+}
+
+function searchMsg(){
+    searchKeyword = document.getElementById("searchKey").value.trim();
+    currentPage = 1;
+    loadMsg();
+}
+
+async function publishMsg(){
+    const content = document.getElementById("newContent").value.trim();
+    const res = await fetch("/api/message/add",{
+        method:"POST",
+        headers:{
+            "Content-Type":"application/json",
+            "Authorization":`Bearer ${token}`
+        },
+        body:JSON.stringify({content})
+    })
+    const ret = await res.json();
+    alert(ret.msg);
+    if(ret.code===200){
+        document.getElementById("newContent").value="";
+        loadMsg();
+    }
+}
+
+function openEdit(id,content){
+    document.getElementById("editMsgId").value = id;
+    document.getElementById("editContent").value = content;
+    document.getElementById("editPopup").classList.remove("hidden");
+}
+function closeEditPopup(){
+    document.getElementById("editPopup").classList.add("hidden");
+}
+
+async function submitEdit(){
+    const id = document.getElementById("editMsgId").value;
+    const content = document.getElementById("editContent").value.trim();
+    const res = await fetch("/api/message/update",{
+        method:"POST",
+        headers:{
+            "Content-Type":"application/json",
+            "Authorization":`Bearer ${token}`
+        },
+        body:JSON.stringify({id,content})
+    })
+    const ret = await res.json();
+    alert(ret.msg);
+    if(ret.code===200){
+        closeEditPopup();
+        loadMsg();
+    }
+}
+
+async function delMsg(id){
+    if(!confirm("确定删除？")) return;
+    const res = await fetch("/api/message/delete",{
+        method:"POST",
+        headers:{
+            "Content-Type":"application/json",
+            "Authorization":`Bearer ${token}`
+        },
+        body:JSON.stringify({id:id})
+    })
+    const ret = await res.json();
+    alert(ret.msg);
+    loadMsg();
+}
+</script>
+</body>
+</html>
